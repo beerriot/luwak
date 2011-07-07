@@ -90,10 +90,14 @@ n_bucket_nval() ->
 %%      input `{0, RootNodeKey}' to the given pipe (this is the form
 %%      of input expected by the fitting implemented by this module).
 -spec queue_file(riak_pipe:pipe(), binary())
-         -> ok | {error, riak_pipe_vnode:qerror()}.
+         -> ok | {error, riak_pipe_vnode:qerror() | root_undefined}.
 queue_file(Pipe, LuwakFilename) ->
-    Root = luwak_pipe:root_of_file(LuwakFilename),
-    riak_pipe:queue_work(Pipe, {0, Root}).
+    case luwak_pipe:root_of_file(LuwakFilename) of
+        undefined ->
+            {error, root_undefined};
+        Root ->
+            riak_pipe:queue_work(Pipe, {0, Root})
+    end.
 
 %% @doc Find the key for the root node of the named file.
 -spec root_of_file(binary()) -> binary().
