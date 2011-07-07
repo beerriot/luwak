@@ -64,12 +64,19 @@ spec() ->
 %%      in a pipe.  This automatically sets the module, chashfun, and
 %%      nval fields correctly.  The name field will be set to the
 %%      `Name' passed as argument.
+%%
+%%      The q_limit field is set to the default order for luwak trees,
+%%      to make the recursive descent less likely to drop inputs
+%%      because of overflowing queues.  You may wish to change this
+%%      field if you use an alternate tree order (or if profiling your
+%%      pipeline suggests it's a good idea, of course).
 -spec spec(term()) -> riak_pipe:fitting_spec().
 spec(Name) ->
     #fitting_spec{name=Name,
                   module=?MODULE,
                   nval=n_bucket_nval(),
-                  chashfun=fun chashfun/1}.
+                  chashfun=fun chashfun/1,
+                  q_limit=?ORDER_DEFAULT}.
 
 %% @doc Get the nval for the Luwak node bucket.
 -spec n_bucket_nval() -> non_neg_integer().
