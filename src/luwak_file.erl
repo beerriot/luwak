@@ -58,29 +58,34 @@ create(Riak, Name, Properties, Attributes) when is_binary(Name) ->
              {ancestors, []},
              {root, undefined}
             ],
-    Obj = riak_object:new(?O_BUCKET, Name, Value),
-    Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Obj = riakc_obj:new(?O_BUCKET, Name, Value),
+    riakc_pb_socket:put(Riak, Obj,
+                        [{w, 2}, {dw, 2}, return_body],
+                        ?TIMEOUT_DEFAULT).
 
 %% @spec set_attributes(Riak :: riak(), Obj :: luwak_file(),
 %%                      Attributes :: dict())
 %%        -> {ok, NewFile}
 %% @doc Sets the new attributes, saves them, and returns a new file handle.
 set_attributes(Riak, Obj, Attributes) ->
-    Value = lists:keyreplace(attributes, 1, riak_object:get_value(Obj),
+    Value = lists:keyreplace(attributes, 1,
+                             binary_to_term(riakc_obj:get_value(Obj)),
                              {attributes, Attributes}),
-    Obj2 = riak_object:update_value(Obj, Value),
-    Riak:put(Obj2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Obj2 = riakc_obj:update_value(Obj, Value),
+    riakc_pb_socket:put(Riak, Obj2,
+                        [{w, 2}, {dw, 2}, return_body],
+                        ?TIMEOUT_DEFAULT).
   
 %% @spec get_attributes(Obj :: luwak_file()) -> dict()
 %% @doc Gets the attribute dictionary from the file handle.
 get_attributes(Obj) ->
-    proplists:get_value(attributes, riak_object:get_value(Obj)).
+    proplists:get_value(attributes, binary_to_term(riakc_obj:get_value(Obj))).
   
 %% @spec exists(Riak :: riak(), Name :: binary())
 %%       -> {ok, true} | {ok, false} | {error, Reason}
 %% @doc Checks for the existence of the named file.
 exists(Riak, Name) ->
-    case Riak:get(?O_BUCKET, Name, 2) of
+    case riakc_pb_socket:get(Riak, ?O_BUCKET, Name, [{r, 2}]) of
         {ok, _Obj} -> {ok, true};
         {error, notfound} -> {ok, false};
         Err -> Err
@@ -107,54 +112,63 @@ length(Riak, File) ->
 %%      the blocks and tree for that file remain untouched.  A GC operation
 %%      (not yet implemented) will be required to clean them up properly.
 delete(Riak, Name) ->
-    Riak:delete(?O_BUCKET, Name, 2).
+    riakc_pb_socket:delete(Riak, ?O_BUCKET, Name, [{rw, 2}]).
 
 %% @spec get(Riak :: riak(), Name :: binary()) -> {ok, File} | {error, Reason}
 %% @doc returns a filehandle for the named file.
 get(Riak, Name) ->
-    Riak:get(?O_BUCKET, Name, 2).
+    riakc_pb_socket:get(Riak, ?O_BUCKET, Name, [{r, 2}]).
 
 %% @spec get_property(Obj :: luwak_file(), PropName :: atom()) -> Property
 %% @doc retrieves the named property from the filehandle.
 get_property(Obj, type) ->
-    case riak_object:get_value(Obj) of
+    case binary_to_term(riakc_obj:get_value(Obj)) of
         List when is_list(List) -> proplists:get_value(type, List);
         #n{} -> node
     end;
 get_property(Obj, links) ->
-    case riak_object:get_value(Obj) of
+    case binary_to_term(riakc_obj:get_value(Obj)) of
         List when is_list(List) -> proplists:get_value(links, List);
         #n{children=Children} -> Children
     end;
 get_property(Obj, PropName) ->
-    case riak_object:get_value(Obj) of
+    case binary_to_term(riakc_obj:get_value(Obj)) of
         List when is_list(List) -> proplists:get_value(PropName, List);
         _ -> undefined
     end.
 
 get_default_block_size() ->
-    app_helper:get_env(luwak, default_block_size, ?BLOCK_DEFAULT).
+    case application:get_env(luwak, default_block_size) of
+        {ok, Size} when is_integer(Size), Size > 0 ->
+            Size;
+        undefined ->
+            ?BLOCK_DEFAULT
+    end.
 
 %% @private
 update_root(Riak, Obj, NewRoot) ->
-    ObjVal1 = riak_object:get_value(Obj),
+    ObjVal1 = binary_to_term(riakc_obj:get_value(Obj)),
     OldRoot = proplists:get_value(root, ObjVal1),
     Ancestors = proplists:get_value(ancestors, ObjVal1),
     ObjVal2 = lists:keyreplace(ancestors, 1, ObjVal1,
                                {ancestors, [OldRoot|Ancestors]}),
     ObjVal3 = lists:keyreplace(root, 1, ObjVal2, {root, NewRoot}),
-    Obj2 = riak_object:update_value(Obj, ObjVal3),
-    Riak:put(Obj2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Obj2 = riakc_obj:update_value(Obj, ObjVal3),
+    riakc_pb_socket:put(Riak, Obj2,
+                        [{w, 2}, {dw, 2}, return_body],
+                        ?TIMEOUT_DEFAULT).
 
 %% @private
 update_checksum(Riak, Obj, ChecksumFun) ->
     case get_property(Obj, checksumming) of
         true ->
-            ObjVal1 = riak_object:get_value(Obj),
+            ObjVal1 = binary_to_term(riakc_obj:get_value(Obj)),
             ObjVal2 = lists:keyreplace(checksum, 1, ObjVal1, 
                                        {checksum, {sha1, ChecksumFun()}}),
-            Obj2 = riak_object:update_value(Obj, ObjVal2),
-            Riak:put(Obj2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]);
+            Obj2 = riakc_obj:update_value(Obj, ObjVal2),
+            riakc_pb_socket:put(Riak, Obj2,
+                                [{w, 2}, {dw, 2}, return_body],
+                                ?TIMEOUT_DEFAULT);
         _ ->
             {ok, Obj}
   end.
@@ -162,4 +176,4 @@ update_checksum(Riak, Obj, ChecksumFun) ->
 %% @spec name(Obj :: luwak_file()) -> binary()
 %% @doc returns the name of the given file handle.
 name(Obj) ->
-    riak_object:key(Obj).
+    riakc_obj:key(Obj).

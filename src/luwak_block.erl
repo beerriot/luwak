@@ -12,14 +12,16 @@ create(Riak, Data) ->
              {created, now()},
              {type, block}
             ],
-    Obj = riak_object:new(?N_BUCKET, skerl:hexhash(?HASH_LEN, Data), Value),
-    Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Obj = riakc_obj:new(?N_BUCKET, skerl:hexhash(?HASH_LEN, Data), Value),
+    riakc_pb_socket:put(Riak, Obj,
+                        [{w, 2}, {dw, 2}, return_body],
+                        ?TIMEOUT_DEFAULT).
 
--spec data(list() | riak_object:riak_object()) -> binary().
+-spec data(list() | riakc_obj:riakc_obj()) -> binary().
 data(Val) when is_list(Val) ->
     proplists:get_value(data, Val);
 data(Object) ->
-    proplists:get_value(data, riak_object:get_value(Object)).
+    proplists:get_value(data, binary_to_term(riakc_obj:get_value(Object))).
 
 name(Object) ->
-    riak_object:key(Object).
+    riakc_obj:key(Object).

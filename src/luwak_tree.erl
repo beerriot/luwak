@@ -28,7 +28,7 @@ update(Riak, File, StartingPos, Blocks) ->
         %% there is no root, therefore we create one
         undefined -> 
             {ok, RootObj} = create_tree(Riak, Order, Blocks),
-            RootName = riak_object:key(RootObj),
+            RootName = riakc_obj:key(RootObj),
             luwak_file:update_root(Riak, File, RootName);
         RootName ->
             {ok, Root} = get(Riak, RootName),
@@ -36,7 +36,7 @@ update(Riak, File, StartingPos, Blocks) ->
             ?debugMsg("children~n"),
             {ok, NewRoot} = subtree_update(Riak, File, Order, StartingPos, 0, 
                                            Root, Blocks),
-            NewRootName = riak_object:key(NewRoot),
+            NewRootName = riakc_obj:key(NewRoot),
             luwak_file:update_root(Riak, File, NewRootName)
     end.
 
@@ -90,8 +90,8 @@ truncate(Riak, File, Start, _Parent=#n{children=Children},
     {ok, NN} = truncate(Riak, File, Start, SubNode, Order,
                         NodeOffset+KeepLength, BlockSize),
     {ok, NewNode} = create_tree(Riak, Order, Keep ++ [NN]),
-    NewNodeVal = riak_object:get_value(NewNode),
-    {ok, {riak_object:key(NewNode),
+    NewNodeVal = binary_to_term(riakc_obj:get_value(NewNode)),
+    {ok, {riakc_obj:key(NewNode),
           luwak_tree_utils:blocklist_length(NewNodeVal#n.children)}};
 truncate(Riak, _File, Start, Block, _Order, NodeOffset, _BlockSize) ->
     ?debugFmt("C truncate(Riak, File, ~p, ~p, ~p, ~p, ~p)~n",
@@ -100,7 +100,7 @@ truncate(Riak, _File, Start, Block, _Order, NodeOffset, _BlockSize) ->
     ByteOffset = Start - NodeOffset,
     <<Retain:ByteOffset/binary, _/binary>> = Data,
     {ok, NewBlock} = luwak_block:create(Riak, Retain),
-    {ok, {riak_object:key(NewBlock), ByteOffset}}.
+    {ok, {riakc_obj:key(NewBlock), ByteOffset}}.
 
 read_split(Children, TreeStart, Start, End) when Start < 0 ->
     read_split(Children, TreeStart, 0, End);
@@ -115,8 +115,8 @@ read_split(Children, TreeStart, Start, End) ->
     {Middle, luwak_tree_utils:blocklist_length(Head)+TreeStart}.
 
 get(Riak, Name) when is_binary(Name) ->
-    {ok, Obj} = Riak:get(?N_BUCKET, Name, 2),
-    {ok, riak_object:get_value(Obj)}.
+    {ok, Obj} = riakc_pb_socket:get(Riak, ?N_BUCKET, Name, [{r, 2}]),
+    {ok, binary_to_term(riakc_obj:get_value(Obj))}.
 
 visualize_tree(Riak, RootName) ->
     {ok, Node} = get(Riak, RootName),
@@ -187,8 +187,8 @@ subtree_update(Riak, File, Order, InsertPos, TreePos, Parent = #n{}, Blocks) ->
                                                       MidHeadStart, 
                                                       ChildNode,
                                                       BlockSplit#split.midhead),
-                  V = riak_object:get_value(ReplacementChild),
-                  {riak_object:key(ReplacementChild),
+                  V = binary_to_term(riakc_obj:get_value(ReplacementChild)),
+                  {riakc_obj:key(ReplacementChild),
                    luwak_tree_utils:blocklist_length(V#n.children)}
           end,
           NodeSplit#split.midhead),
@@ -209,8 +209,8 @@ subtree_update(Riak, File, Order, InsertPos, TreePos, Parent = #n{}, Blocks) ->
                                                       MidTailStart,
                                                       ChildNode,
                                                       BlockSplit#split.midtail),
-                  V = riak_object:get_value(ReplacementChild),
-                  {riak_object:key(ReplacementChild),
+                  V = binary_to_term(riakc_obj:get_value(ReplacementChild)),
+                  {riakc_obj:key(ReplacementChild),
                    luwak_tree_utils:blocklist_length(V#n.children)}
           end,
           NodeSplit#split.midtail),
@@ -230,7 +230,7 @@ list_into_nodes(Riak, Children, Order, StartingPos) ->
                    (Sublist) ->
                         Length = luwak_tree_utils:blocklist_length(Sublist),
                         {ok, Obj} = create_node(Riak, Sublist),
-                        {riak_object:key(Obj), Length}
+                        {riakc_obj:key(Obj), Length}
                 end,
                 Order,
                 Children),
@@ -242,9 +242,9 @@ list_into_nodes(Riak, Children, Order, StartingPos) ->
     end.
 
 %% @spec block_at(Riak::riak(), File::luwak_file(), Pos::int()) ->
-%%          {ok, BlockObj::riak_object:riak_object()} | {error, Reason}
+%%          {ok, BlockObj::riakc_obj:riakc_obj()} | {error, Reason}
 -spec block_at(term(), term(), non_neg_integer()) ->
-                      {ok, BlockObj::riak_object:riak_object()} | 
+                      {ok, BlockObj::riakc_obj:riakc_obj()} | 
                       {ok, undefined} | {error, Reason::term()}.
 block_at(Riak, File, Pos) ->
     case luwak_file:get_property(File, root) of
@@ -253,7 +253,7 @@ block_at(Riak, File, Pos) ->
     end.
 
 block_at_retr(Riak, NodeName, NodeOffset, Pos) ->
-    case Riak:get(?N_BUCKET, NodeName, 2) of
+    case riakc_pb_socket:get(Riak, ?N_BUCKET, NodeName, [{r, 2}]) of
         {ok, NodeObj} ->
             Type = luwak_file:get_property(NodeObj, type),
             Links = luwak_file:get_property(NodeObj, links),
@@ -312,8 +312,10 @@ create_node(Riak, Children) ->
     ?debugFmt("create_node(Riak, ~p)~n", [Children]),
     N = #n{created=now(),children=Children},
     Name = skerl:hexhash(?HASH_LEN, term_to_binary(Children)),
-    Obj = riak_object:new(?N_BUCKET, Name, N),
-    Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Obj = riakc_obj:new(?N_BUCKET, Name, N),
+    riakc_pb_socket:put(Riak, Obj,
+                        [{w, 2}, {dw, 2}, return_body],
+                        ?TIMEOUT_DEFAULT).
 
 truncate(List) when is_list(List) ->
     lists:map(fun({Data,Length}) -> {truncate(Data),Length} end, List);

@@ -34,9 +34,12 @@ simple_put_range() ->
       Hash1 = <<"751fa004096ddee0b639b37d02fdb2dc68bd4eb7749bb2c17e5edc624d8a9eef4815e4cc1132cc14dfc493d1f46fc1b072653c0bcb3533e1da9676e96a4aeb30">>,
       Hash2 = <<"86a17f1a92887662099480d4bdd222d7e3372b347a1df276a183e3df5407d68ab44225967c0047f8e1a7c8d854198ac949a3d8f960385c7df4655a9143ad7fa7">>,
       Hash3 = <<"a472d1328b53ad058a383902e0a4170ad6b202f78fb1b25a5a41c8bb9f4a552f20ffebed176620f84990d2d60c9ecd85513af915e8f25bcb35e77c1b46efed67">>,
-      {ok, Block1} = Riak:get(<<"luwak_node">>, Hash1, 2),
-      {ok, Block2} = Riak:get(<<"luwak_node">>, Hash2, 2),
-      {ok, Block3} = Riak:get(<<"luwak_node">>, Hash3, 2),
+      {ok, Block1} = riakc_pb_socket:get(
+                       Riak, <<"luwak_node">>, Hash1, [{r, 2}]),
+      {ok, Block2} = riakc_pb_socket:get(
+                       Riak, <<"luwak_node">>, Hash2, [{r, 2}]),
+      {ok, Block3} = riakc_pb_socket:get(
+                       Riak, <<"luwak_node">>, Hash3, [{r, 2}]),
       ?assertEqual(<<"abcde">>, luwak_block:data(Block1)),
       ?assertEqual(<<"fghij">>, luwak_block:data(Block2)),
       ?assertEqual(<<"klm">>, luwak_block:data(Block3)),

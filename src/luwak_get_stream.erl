@@ -18,7 +18,7 @@ start(Riak, File, Start, Length) ->
     Ref = make_ref(),
     BlockSize = luwak_file:get_property(File, block_size),
     Root = luwak_file:get_property(File, root),
-    MapStart = [{{?N_BUCKET, Root}, 0}],
+    MapStart = [{Root, 0}],
     Map = #map{riak=Riak,blocksize=BlockSize,ref=Ref,
                offset=Start,endoffset=Start+Length},
     Receiver = proc_lib:spawn(receiver_fun(MapStart, self(), Map)),
@@ -31,11 +31,12 @@ start(Riak, File, Start, Length) ->
 %%      Timeout milliseconds have elapsed.  Whichever occurs first.
 %%      The data blocks are returned as a tuple with the data binary
 %%      and its offset from the start of the file.
-recv({get_stream, Ref, _Pid}, Timeout) ->
+recv({get_stream, Ref, Pid}, Timeout) ->
     receive
         {get, Ref, Data, Offset} -> {Data, Offset};
         {get, Ref, eos} -> eos;
-        {get, Ref, closed} -> closed
+        {get, Ref, closed} -> closed;
+        {'DOWN', _Mon, process, Pid, _Reason} -> closed
     after Timeout ->
             {error, timeout}
     end.
@@ -43,24 +44,16 @@ recv({get_stream, Ref, _Pid}, Timeout) ->
 %% @doc Closes a get stream.  Use this to stop the flow of messages
 %%      from a get stream.  It is not required that a completed stream
 %%      have close called on it.
-close({get_stream, Ref, Pid}) ->
-    Pid ! {close, Ref}.
+close({get_stream, _Ref, Pid}) ->
+    exit(Pid, kill).
 
-nonblock_mr(Riak,Query,MapInput) ->
-    case Riak:mapred_stream(Query,self(),60000) of
-        {ok, {_ReqId, FlowPid}} ->
-            luke_flow:add_inputs(FlowPid, MapInput),
-            luke_flow:finish_inputs(FlowPid);
-        Error ->
-            exit(Error)
-    end.
-
-receiver_fun(MapInput, Parent, Map=#map{riak=Riak,offset=Offset,
+receiver_fun(MapInput, Parent, Map=#map{offset=Offset,
                                         endoffset=EndOffset,ref=Ref}) ->
     fun() ->
             ?debugFmt("receiver_fun(~p, ~p, ~p)~n", [MapInput, Parent, Map]),
-            Query = [{map,{qfun,map_fun()},Map#map{pid=self()}, false}],
-            nonblock_mr(Riak, Query, MapInput),
+            Self = self(),
+            proc_lib:spawn(
+              fun() -> tree_walk(MapInput, Map#map{pid=Self}) end),
             receive_loop(Ref, Offset, EndOffset, Parent)
     end.
 
@@ -84,37 +77,27 @@ receive_loop(Ref, Offset, EndOffset, Parent) ->
             ok
     end.
 
-map_fun() ->
-    fun(Obj, TreeOffset, Map) ->
-            case (catch map(riak_object:get_value(Obj), TreeOffset, Map)) of
-                {'EXIT', Error} ->
-                    error_logger:error_msg("map failed with: ~p~n", [Error]),
-                    throw(Error);
-                Result ->
-                    Result
-            end
-    end.
+tree_walk([], #map{pid=P, ref=Ref}) ->
+    ?debugMsg("tree_walk([]) -> eos~n"),
+    P ! {eos, Ref};
+tree_walk([{_Key, Offset}|_Rest], #map{endoffset=End, pid=P, ref=Ref})
+  when Offset > End ->
+    ?debugFmt("tree_walk(~p > ~p) -> eos~n", [Offset, End]),
+    P ! {eos, Ref};
+tree_walk([{Key, Offset}|Rest], #map{riak=Riak}=Map) ->
+    ?debugFmt("tree_walk(~p blocks)~n", [1+length(Rest)]),
+    {ok, Obj} = riakc_pb_socket:get(Riak, ?N_BUCKET, Key, [{r, 1}]),
+    Result = map(binary_to_term(riakc_obj:get_value(Obj)), Offset, Map),
+    tree_walk(Result++Rest, Map).
 
 map(Parent=#n{}, TreeOffset, 
-    Map=#map{riak=Riak,offset=Offset,endoffset=EndOffset,
-             blocksize=BlockSize,pid=Pid,ref=Ref}) ->
-    ?debugFmt("A map(~p, ~p, ~p)~n", [Parent, TreeOffset, Map]),
+    _Map=#map{riak=Riak,offset=Offset,endoffset=EndOffset, blocksize=BlockSize}) ->
+    ?debugFmt("A map(~p, ~p, ~p)~n", [Parent, TreeOffset, _Map]),
     Fun = fun({Name,Length},AccOffset) ->
-                  {[{{?N_BUCKET, Name}, AccOffset}], AccOffset+Length}
+                  {[{Name, AccOffset}], AccOffset+Length}
           end,
-    Blocks = luwak_tree:get_range(Riak, Fun, Parent, BlockSize,
-                                  TreeOffset, Offset, EndOffset),
-    case Blocks of
-        [] ->
-            Pid ! {eos, Ref};
-        _ ->
-            Query = [{map,{qfun,map_fun()},Map,false}],
-            spawn(fun() ->
-                          ?debugFmt("launching MR on ~p~n", [Blocks]),
-                          nonblock_mr(Riak, Query, Blocks)
-                  end)
-    end,
-    [];
+    luwak_tree:get_range(Riak, Fun, Parent, BlockSize,
+                         TreeOffset, Offset, EndOffset);
 map(Block, TreeOffset,
     _Map=#map{offset=Offset,ref=Ref,pid=Pid,endoffset=EndOffset,blocksize=
 BlockSize})
