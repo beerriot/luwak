@@ -3,6 +3,19 @@ Luwak
 
 The Riak key/value store is extremely fast and reliable, but has limitations on the size of object that preclude its use for some applications.  For example, storing high definition still images or video is difficult or impossible.  Luwak is a service layer on Riak that provides a simple, file-oriented abstraction for enormous objects.
 
+The `external` Branch
+--------
+
+Luwak was originally designed to be used from within a Riak cluster.  Since luwak is no longer included with Riak, it takes jumping through quite a few more hoops to get it working.
+
+The [`external` branch](https://github.com/beerriot/luwak/tree/external) converts all of the luwak libraries to access Riak over Protocol Buffers instead.  This branch provides the entire Luwak library, for any Erlang application to use directly for storing large binary blobs chunked into Riak objects.
+
+This branch also remove the Webmachine resource for providing Luwak access over HTTP.  Instead, that resource is provided in a separate application, demonstrating exactly how an Erlang application might use this Luwak library.  That application is available at http://github.com/beerriot/luwakapp
+
+*There are two very important differences* that accessing Riak over Protocol Buffers forces on Luwak usage.  The first is that this library can read Luwak files created with the old Luwak setup, but the old Luwak setup cannot read files created (or modified) by this library.  This has to do with the fact that luwak stores Erlang terms in its Riak objects, which the cluster-internal client serializes and deserializes automatically, but the Protocol Buffers client always forces to binary encoding.
+
+The second difference is that this libary uses regular key reads for the get stream, instead of MapReduce.  This has several benefits, including triggering read repair when necessary, and the potential for lower latency (due to waiting on only the fastest response, instead of a random response).  The major detriment is that it will likely change the performance profile of Luwak, which may negate any planning and evaluation you did with the old setup.
+
 Examples
 ========
 
